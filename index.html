@@ -1,0 +1,713 @@
+<!-- Chosen Palette: Slate & Soft Emerald -->
+<!-- Application Structure Plan: 
+    1. Autenticação: Login/Signup via Firestore para área administrativa.
+    2. Gestão de Produtos: CRUD completo com suporte a importação de CSV/XLS/XLSX (SheetJS).
+    3. Catálogo Administrativo & Público: Visualização com busca, ordenação (Nome/Preço) e troca de layout (Blocos/Lista).
+    4. Página Pública (#public): Vitrine externa para clientes sem necessidade de login.
+    5. Interação WhatsApp: Compartilhamento de ofertas formatadas.
+    6. Clipboard: Fallback robusto para evitar erros de permissão em iframes.
+-->
+<!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema AffiliatePro - Gestão e Catálogo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+
+        .login-gradient {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        }
+
+        .product-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .product-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 20px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        .hidden-screen {
+            display: none !important;
+        }
+
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #10b981;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        #toast {
+            visibility: hidden;
+            min-width: 250px;
+            margin-left: -125px;
+            background-color: #334155;
+            color: #fff;
+            text-align: center;
+            border-radius: 12px;
+            padding: 16px;
+            position: fixed;
+            z-index: 200;
+            left: 50%;
+            bottom: 30px;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        #toast.show {
+            visibility: visible;
+            -webkit-animation: fadein 0.5s, fadeout 0.5s 2.5s;
+            animation: fadein 0.5s, fadeout 0.5s 2.5s;
+        }
+
+        @-webkit-keyframes fadein {
+            from {
+                bottom: 0;
+                opacity: 0;
+            }
+
+            to {
+                bottom: 30px;
+                opacity: 1;
+            }
+        }
+
+        @keyframes fadein {
+            from {
+                bottom: 0;
+                opacity: 0;
+            }
+
+            to {
+                bottom: 30px;
+                opacity: 1;
+            }
+        }
+
+        @-webkit-keyframes fadeout {
+            from {
+                bottom: 30px;
+                opacity: 1;
+            }
+
+            to {
+                bottom: 0;
+                opacity: 0;
+            }
+        }
+
+        @keyframes fadeout {
+            from {
+                bottom: 30px;
+                opacity: 1;
+            }
+
+            to {
+                bottom: 0;
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+
+<body class="text-slate-800">
+
+    <div id="toast">Mensagem aqui</div>
+
+    <!-- TELA DE AUTENTICAÇÃO -->
+    <div id="login-screen" class="fixed inset-0 z-[100] flex items-center justify-center login-gradient p-4">
+        <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden">
+            <div class="p-8 text-center">
+                <div
+                    class="inline-flex items-center justify-center w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl mb-4 text-3xl">
+                    🛡️</div>
+                <h1 id="auth-title" class="text-2xl font-bold text-slate-900">Acesso Restrito</h1>
+                <p id="auth-subtitle" class="text-slate-500 text-sm mt-2">Área de gestão de produtos afiliados.</p>
+            </div>
+
+            <form id="login-form" class="p-8 pt-0 space-y-4">
+                <input type="text" id="username" required placeholder="Usuário"
+                    class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all">
+                <input type="password" id="password" required placeholder="Senha"
+                    class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all">
+                <button type="submit" id="btn-login-submit"
+                    class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl transition-all">Entrar</button>
+                <p class="text-center text-sm text-slate-500 mt-4">
+                    Novo aqui? <button type="button" onclick="toggleAuthMode('signup')"
+                        class="text-emerald-600 font-bold hover:underline">Criar conta</button>
+                </p>
+                <div id="login-error" class="text-red-500 text-xs text-center font-medium mt-2 hidden">Usuário ou senha
+                    inválidos.</div>
+            </form>
+
+            <form id="signup-form" class="p-8 pt-0 space-y-4 hidden-screen">
+                <input type="text" id="new-username" required placeholder="Definir Usuário"
+                    class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all">
+                <input type="password" id="new-password" required placeholder="Definir Senha"
+                    class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all">
+                <input type="password" id="confirm-password" required placeholder="Confirmar Senha"
+                    class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition-all">
+                <button type="submit" id="btn-signup-submit"
+                    class="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-xl transition-all">Finalizar
+                    Cadastro</button>
+                <p class="text-center text-sm text-slate-500 mt-4">
+                    Já tem conta? <button type="button" onclick="toggleAuthMode('login')"
+                        class="text-emerald-600 font-bold hover:underline">Fazer login</button>
+                </p>
+            </form>
+        </div>
+    </div>
+
+    <!-- PÁGINA PÚBLICA -->
+    <div id="public-content" class="hidden-screen min-h-screen flex flex-col bg-slate-50">
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <span class="text-xl">🛍️</span>
+                    <span class="font-bold text-slate-900">Vitrine de <span
+                            class="text-emerald-600">Ofertas</span></span>
+                </div>
+                <button onclick="window.location.hash = ''"
+                    class="text-[10px] font-bold text-slate-400 bg-slate-50 border border-slate-200 px-3 py-1 rounded-full hover:bg-slate-100 transition-all uppercase">Painel
+                    Admin</button>
+            </div>
+        </header>
+        <main class="flex-grow max-w-7xl mx-auto w-full p-4 md:p-8 space-y-6">
+            <div class="flex flex-wrap gap-4 items-center justify-between">
+                <div class="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-200">
+                    <button onclick="setPublicView('grid')" id="btn-pub-grid"
+                        class="p-2 rounded-lg bg-emerald-50 text-emerald-600">🔳</button>
+                    <button onclick="setPublicView('list')" id="btn-pub-list"
+                        class="p-2 rounded-lg text-slate-400">☰</button>
+                </div>
+                <select onchange="setPublicSort(this.value)"
+                    class="bg-white border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold outline-none cursor-pointer">
+                    <option value="nameAsc">Nome (A-Z)</option>
+                    <option value="nameDesc">Nome (Z-A)</option>
+                    <option value="priceAsc">Menor Preço</option>
+                    <option value="priceDesc">Maior Preço</option>
+                </select>
+            </div>
+            <div id="public-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <!-- Injetado -->
+            </div>
+        </main>
+    </div>
+
+    <!-- APLICAÇÃO INTERNA -->
+    <div id="main-content" class="hidden-screen flex flex-col min-h-screen">
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <span class="text-xl">🚀</span>
+                    <span class="font-bold text-slate-900">Affiliate<span class="text-emerald-600">Pro</span></span>
+                </div>
+                <nav class="hidden md:flex items-center gap-6">
+                    <button onclick="switchTab('catalog')" id="nav-catalog"
+                        class="text-sm font-semibold text-emerald-600">Catálogo</button>
+                    <button onclick="switchTab('admin')" id="nav-admin"
+                        class="text-sm font-semibold text-slate-500 hover:text-emerald-600">Gestão</button>
+                </nav>
+                <div class="flex items-center gap-4">
+                    <span id="display-user"
+                        class="text-xs font-bold text-slate-400 bg-slate-50 border border-slate-200 px-3 py-1 rounded-full uppercase tracking-widest">...</span>
+                    <button onclick="logout()"
+                        class="text-slate-400 hover:text-red-500 text-lg transition-colors">🚪</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="md:hidden bg-white border-b border-slate-100 flex justify-around py-3">
+            <button onclick="switchTab('catalog')"
+                class="text-xs font-bold uppercase tracking-wider text-emerald-600">Catálogo</button>
+            <button onclick="switchTab('admin')"
+                class="text-xs font-bold uppercase tracking-wider text-slate-400">Gestão</button>
+        </div>
+
+        <main class="flex-grow max-w-7xl mx-auto w-full p-4 md:p-8">
+            <!-- ABA: CATÁLOGO INTERNO -->
+            <section id="tab-catalog" class="space-y-6">
+                <div class="flex flex-col md:flex-row gap-4 items-center justify-between">
+                    <div class="relative w-full md:max-w-md">
+                        <input type="text" id="search" oninput="renderCatalog()" placeholder="Buscar produto..."
+                            class="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+                        <span class="absolute left-3 top-2.5 text-slate-400">🔍</span>
+                    </div>
+                    <div class="flex flex-wrap gap-2 w-full md:w-auto">
+                        <div class="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200">
+                            <button onclick="setAdminView('grid')" id="btn-adm-grid"
+                                class="p-1.5 rounded-lg bg-emerald-50 text-emerald-600">🔳</button>
+                            <button onclick="setAdminView('list')" id="btn-adm-list"
+                                class="p-1.5 rounded-lg text-slate-400">☰</button>
+                        </div>
+                        <select onchange="setAdminSort(this.value)"
+                            class="bg-white border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold outline-none cursor-pointer">
+                            <option value="nameAsc">A-Z</option>
+                            <option value="nameDesc">Z-A</option>
+                            <option value="priceAsc">Menor Preço</option>
+                            <option value="priceDesc">Maior Preço</option>
+                        </select>
+                        <button onclick="copyPublicLink()"
+                            class="bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-xs font-bold border border-emerald-100 hover:bg-emerald-100 transition-all">🔗
+                            Link Público</button>
+                        <button onclick="copyFullList()"
+                            class="bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-bold hover:bg-black transition-all">📋
+                            Lista Zap</button>
+                    </div>
+                </div>
+                <div id="product-grid">
+                    <!-- Cards dinâmicos -->
+                </div>
+            </section>
+
+            <!-- ABA: GESTÃO -->
+            <section id="tab-admin" class="hidden-screen max-w-5xl mx-auto space-y-8">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div class="bg-white rounded-3xl border border-slate-200 p-6 space-y-4 shadow-sm">
+                        <h2 class="text-lg font-bold text-slate-800">Adicionar Produto</h2>
+                        <form id="product-form" class="space-y-3">
+                            <input type="text" id="prod-name" required placeholder="Nome do Produto"
+                                class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+                            <div class="grid grid-cols-2 gap-3">
+                                <input type="text" id="prod-shop" required placeholder="Loja"
+                                    class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+                                <input type="number" step="0.01" id="prod-price" required placeholder="Preço"
+                                    class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+                            </div>
+                            <input type="url" id="prod-image" placeholder="URL da Foto"
+                                class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+                            <input type="url" id="prod-link" required placeholder="Link de Afiliado"
+                                class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+                            <button type="submit"
+                                class="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl hover:bg-emerald-700 transition-all">💾
+                                Salvar no Catálogo</button>
+                        </form>
+                    </div>
+                    <div class="bg-white rounded-3xl border border-slate-200 p-6 space-y-4 shadow-sm">
+                        <h2 class="text-lg font-bold text-emerald-800">Importação em Massa</h2>
+                        <div
+                            class="p-8 border-2 border-dashed border-emerald-100 rounded-3xl text-center bg-emerald-50/30">
+                            <input type="file" id="import-file" accept=".xlsx, .xls, .csv" class="hidden">
+                            <label for="import-file"
+                                class="cursor-pointer text-emerald-600 font-bold block mb-1">Selecionar Planilha (.csv,
+                                .xlsx)</label>
+                            <p id="file-name" class="text-xs text-slate-400 italic"></p>
+                        </div>
+                        <button onclick="handleMassImport()" id="btn-import-file"
+                            class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-all">🚀
+                            Importar Agora</button>
+                    </div>
+                </div>
+                <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                    <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Produtos Ativos (<span
+                            id="count-products">0</span>)</h3>
+                    <div id="admin-list" class="space-y-3"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Firebase e Lógica -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDocs, onSnapshot, deleteDoc, query, serverTimestamp, getDoc, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCDa8BELWhlctS9mAN0DrFsHciZ7hzG68Q",
+            authDomain: "siag-52468.firebaseapp.com",
+            projectId: "siag-52468",
+            storageBucket: "siag-52468.firebasestorage.app",
+            messagingSenderId: "519623463797",
+            appId: "1:519623463797:web:116c3876531fa27a5ef93c"
+        };
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        let products = [];
+        let isAppAuthorized = false;
+
+        let adminViewType = 'grid';
+        let adminSortType = 'nameAsc';
+        let publicViewType = 'grid';
+        let publicSortType = 'nameAsc';
+
+        // CLIPBOARD FIX (REGRAS DE IFRAME)
+        window.copyToClipboard = (text) => {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed"; textArea.style.left = "-9999px"; textArea.style.top = "0";
+            document.body.appendChild(textArea); textArea.focus(); textArea.select();
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) showToast('✅ Copiado para a área de transferência!');
+            } catch (err) { console.error(err); }
+            document.body.removeChild(textArea);
+        };
+
+        window.showToast = (msg) => {
+            const t = document.getElementById("toast");
+            if (!t) return;
+            t.innerHTML = msg; t.className = "show";
+            setTimeout(() => { t.className = t.className.replace("show", ""); }, 3000);
+        };
+
+        window.copyPublicLink = () => {
+            const link = window.location.href.split('#')[0] + '#public';
+            window.copyToClipboard(link);
+        };
+
+        window.setAdminView = (type) => {
+            adminViewType = type;
+            const btnG = document.getElementById('btn-adm-grid');
+            const btnL = document.getElementById('btn-adm-list');
+            if (btnG) btnG.className = type === 'grid' ? 'p-1.5 rounded-lg bg-emerald-50 text-emerald-600' : 'p-1.5 rounded-lg text-slate-400';
+            if (btnL) btnL.className = type === 'list' ? 'p-1.5 rounded-lg bg-emerald-50 text-emerald-600' : 'p-1.5 rounded-lg text-slate-400';
+            renderCatalog();
+        };
+
+        window.setAdminSort = (type) => { adminSortType = type; renderCatalog(); };
+        window.setPublicView = (type) => {
+            publicViewType = type;
+            const btnG = document.getElementById('btn-pub-grid');
+            const btnL = document.getElementById('btn-pub-list');
+            if (btnG) btnG.className = type === 'grid' ? 'p-2 rounded-lg bg-emerald-50 text-emerald-600' : 'p-2 rounded-lg text-slate-400';
+            if (btnL) btnL.className = type === 'list' ? 'p-2 rounded-lg bg-emerald-50 text-emerald-600' : 'p-2 rounded-lg text-slate-400';
+            renderPublicCatalog();
+        };
+        window.setPublicSort = (type) => { publicSortType = type; renderPublicCatalog(); };
+
+        window.toggleAuthMode = (mode) => {
+            const l = document.getElementById('login-form'), s = document.getElementById('signup-form'), t = document.getElementById('auth-title');
+            if (mode === 'signup') { l.classList.add('hidden-screen'); s.classList.remove('hidden-screen'); if (t) t.innerText = "Criar Conta"; }
+            else { l.classList.remove('hidden-screen'); s.classList.add('hidden-screen'); if (t) t.innerText = "Acesso Restrito"; }
+        };
+
+        const initFirebaseSession = async () => {
+            try { if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); else await signInAnonymously(auth); } catch (e) { }
+        };
+
+        const checkRoute = () => {
+            const isPublic = window.location.hash === '#public';
+            const loginScreen = document.getElementById('login-screen');
+            const mainContent = document.getElementById('main-content');
+            const publicContent = document.getElementById('public-content');
+
+            if (isPublic) {
+                if (loginScreen) loginScreen.classList.add('hidden-screen');
+                if (mainContent) mainContent.classList.add('hidden-screen');
+                if (publicContent) publicContent.classList.remove('hidden-screen');
+                renderPublicCatalog();
+            } else {
+                if (publicContent) publicContent.classList.add('hidden-screen');
+                if (isAppAuthorized) {
+                    if (loginScreen) loginScreen.classList.add('hidden-screen');
+                    if (mainContent) mainContent.classList.remove('hidden-screen');
+                    renderCatalog();
+                } else {
+                    if (loginScreen) loginScreen.classList.remove('hidden-screen');
+                    if (mainContent) mainContent.classList.add('hidden-screen');
+                }
+            }
+        };
+
+        window.addEventListener('hashchange', checkRoute);
+
+        document.getElementById('signup-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const user = document.getElementById('new-username').value.trim().toLowerCase(), pass = document.getElementById('new-password').value, conf = document.getElementById('confirm-password').value;
+            if (pass !== conf) return showToast("⚠️ Senhas não conferem.");
+            try {
+                const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', user);
+                await setDoc(userRef, { password: pass });
+                showToast("✅ Conta criada com sucesso!"); toggleAuthMode('login');
+            } catch (err) { showToast("❌ Erro ao criar conta."); }
+        });
+
+        document.getElementById('login-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const user = document.getElementById('username').value.trim().toLowerCase(), pass = document.getElementById('password').value;
+            try {
+                const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', user);
+                const userSnap = await getDoc(userRef);
+                if (userSnap.exists() && userSnap.data().password === pass) {
+                    isAppAuthorized = true;
+                    localStorage.setItem('aff_session_user', user);
+                    const displayUser = document.getElementById('display-user');
+                    if (displayUser) displayUser.innerText = user;
+                    checkRoute();
+                } else document.getElementById('login-error').classList.remove('hidden');
+            } catch (err) { showToast("❌ Erro no login."); }
+        });
+
+        window.logout = () => { localStorage.removeItem('aff_session_user'); location.reload(); };
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                initData();
+                const saved = localStorage.getItem('aff_session_user');
+                if (saved) {
+                    isAppAuthorized = true;
+                    const displayUser = document.getElementById('display-user');
+                    if (displayUser) displayUser.innerText = saved;
+                }
+            }
+            checkRoute();
+        });
+
+        window.switchTab = (tab) => {
+            ['catalog', 'admin'].forEach(t => {
+                const el = document.getElementById(`tab-${t}`);
+                if (el) el.classList.add('hidden-screen');
+                const btn = document.getElementById(`nav-${t}`);
+                if (btn) { btn.classList.remove('text-emerald-600'); btn.classList.add('text-slate-500'); }
+            });
+            const activeTab = document.getElementById(`tab-${tab}`);
+            if (activeTab) activeTab.classList.remove('hidden-screen');
+            const activeBtn = document.getElementById(`nav-${tab}`);
+            if (activeBtn) { activeBtn.classList.remove('text-slate-500'); activeBtn.classList.add('text-emerald-600'); }
+        };
+
+        const initData = () => {
+            const q = collection(db, 'artifacts', appId, 'public', 'data', 'products');
+            onSnapshot(q, (snapshot) => {
+                products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const countEl = document.getElementById('count-products');
+                if (countEl) countEl.innerText = products.length;
+                renderCatalog();
+                renderAdminList();
+                renderPublicCatalog();
+            });
+        };
+
+        document.getElementById('product-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                name: (document.getElementById('prod-name').value || "").toString(),
+                shop: (document.getElementById('prod-shop').value || "").toString(),
+                price: parseFloat(document.getElementById('prod-price').value) || 0,
+                image: document.getElementById('prod-image').value || "https://placehold.co/400x400?text=Sem+imagem",
+                link: document.getElementById('prod-link').value,
+                createdAt: serverTimestamp()
+            };
+            try {
+                await setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'products')), data);
+                document.getElementById('product-form').reset(); showToast("✅ Produto salvo!");
+            } catch (e) { showToast("❌ Erro ao salvar."); }
+        });
+
+        const fileInput = document.getElementById('import-file');
+        if (fileInput) fileInput.addEventListener('change', (e) => {
+            const nameEl = document.getElementById('file-name');
+            if (nameEl) nameEl.innerText = e.target.files[0]?.name || "";
+        });
+
+        window.handleMassImport = () => {
+            const file = fileInput.files[0];
+            if (!file) return showToast("⚠️ Selecione um arquivo.");
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const workbook = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+                if (jsonData.length < 2) return;
+                const dataRows = jsonData.slice(1);
+                let batch = writeBatch(db);
+                for (let i = 0; i < dataRows.length; i++) {
+                    const row = dataRows[i];
+                    if (!row || row.length < 2) continue;
+                    const productData = {
+                        name: (row[0] || "Sem Nome").toString(),
+                        shop: (row[1] || "Geral").toString(),
+                        price: parseFloat(row[2]) || 0,
+                        image: (row[3] || "https://placehold.co/400x400?text=Sem+imagem").toString(),
+                        link: (row[4] || "#").toString(),
+                        createdAt: serverTimestamp()
+                    };
+                    batch.set(doc(collection(db, 'artifacts', appId, 'public', 'data', 'products')), productData);
+                }
+                await batch.commit();
+                showToast("✅ Importação em massa concluída!");
+                fileInput.value = ""; if (document.getElementById('file-name')) document.getElementById('file-name').innerText = "";
+            };
+            reader.readAsArrayBuffer(file);
+        };
+
+        window.whatsappShare = (name, price, link) => {
+            const msg = `*${name}* 🛍️\n\n✨ Confira essa oferta incrível!\n💰 Valor: *R$ ${price}*\n\n🔗 Link Seguro: ${link}`;
+            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+        };
+
+        const sortProducts = (list, sortType) => {
+            return [...list].sort((a, b) => {
+                const nameA = (a.name || "").toString().toLowerCase();
+                const nameB = (b.name || "").toString().toLowerCase();
+                const priceA = parseFloat(a.price) || 0;
+                const priceB = parseFloat(b.price) || 0;
+                if (sortType === 'nameAsc') return nameA.localeCompare(nameB);
+                if (sortType === 'nameDesc') return nameB.localeCompare(nameA);
+                if (sortType === 'priceAsc') return priceA - priceB;
+                if (sortType === 'priceDesc') return priceB - priceA;
+                return 0;
+            });
+        };
+
+        window.renderCatalog = () => {
+            const grid = document.getElementById('product-grid');
+            if (!grid) return;
+            const queryText = document.getElementById('search')?.value.toLowerCase() || "";
+            let filtered = products.filter(p => (p.name || "").toString().toLowerCase().includes(queryText));
+            filtered = sortProducts(filtered, adminSortType);
+
+            grid.className = adminViewType === 'grid'
+                ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+                : "flex flex-col gap-4";
+
+            grid.innerHTML = filtered.map(p => {
+                const prodName = (p.name || "").toString();
+                const prodPrice = typeof p.price === 'number' ? p.price.toFixed(2) : "0.00";
+                const prodImage = (p.image || "https://placehold.co/400x400?text=Sem+imagem").toString();
+                const prodLink = (p.link || "#").toString();
+
+                if (adminViewType === 'list') {
+                    return `
+                    <div class="bg-white p-3 rounded-2xl border border-slate-200 flex items-center gap-4 shadow-sm">
+                        <img src="${prodImage}" class="w-16 h-16 object-contain bg-slate-50 rounded-xl" onerror="this.src='https://placehold.co/400x400?text=Sem+imagem'">
+                        <div class="flex-grow">
+                            <h3 class="font-bold text-slate-800 text-xs line-clamp-1">${prodName}</h3>
+                            <p class="text-emerald-600 font-black text-base">R$ ${prodPrice}</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="copyMsg('${prodName.replace(/'/g, "\\'")}', '${prodPrice}', '${prodLink}')" class="bg-slate-100 p-2 rounded-xl text-slate-600">📋</button>
+                            <button onclick="whatsappShare('${prodName.replace(/'/g, "\\'")}', '${prodPrice}', '${prodLink}')" class="bg-emerald-500 text-white p-2 rounded-xl">💬</button>
+                        </div>
+                    </div>`;
+                }
+
+                return `
+                <div class="bg-white p-4 rounded-3xl border border-slate-200 product-card flex flex-col justify-between shadow-sm overflow-hidden">
+                    <div>
+                        <div class="aspect-square bg-slate-50 rounded-2xl mb-4 overflow-hidden border border-slate-100 flex items-center justify-center">
+                            <img src="${prodImage}" class="max-w-full max-h-full object-contain" onerror="this.src='https://placehold.co/400x400?text=Sem+imagem'">
+                        </div>
+                        <h3 class="font-bold text-slate-900 text-xs leading-tight h-8 overflow-hidden line-clamp-2">${prodName}</h3>
+                        <p class="text-lg font-black text-emerald-600 mt-2 italic">R$ ${prodPrice}</p>
+                    </div>
+                    <div class="mt-4 grid grid-cols-2 gap-2">
+                        <button onclick="copyMsg('${prodName.replace(/'/g, "\\'")}', '${prodPrice}', '${prodLink}')" class="bg-emerald-50 text-emerald-700 font-bold py-2 rounded-xl text-[10px] uppercase">📋 Copiar</button>
+                        <button onclick="whatsappShare('${prodName.replace(/'/g, "\\'")}', '${prodPrice}', '${prodLink}')" class="bg-emerald-500 text-white font-bold py-2 rounded-xl text-[10px] uppercase">💬 WhatsApp</button>
+                    </div>
+                </div>`;
+            }).join('');
+        };
+
+        window.renderPublicCatalog = () => {
+            const grid = document.getElementById('public-grid');
+            if (!grid) return;
+            let sorted = sortProducts(products, publicSortType);
+
+            grid.className = publicViewType === 'grid'
+                ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+                : "flex flex-col gap-4";
+
+            grid.innerHTML = sorted.map(p => {
+                const prodName = (p.name || "").toString();
+                const prodPrice = typeof p.price === 'number' ? p.price.toFixed(2) : "0.00";
+                const prodImage = (p.image || "https://placehold.co/400x400?text=Sem+imagem").toString();
+                const prodLink = (p.link || "#").toString();
+
+                if (publicViewType === 'list') {
+                    return `
+                    <div class="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-6">
+                        <div class="w-24 h-24 sm:w-32 sm:h-32 flex-shrink-0 bg-slate-50 rounded-2xl overflow-hidden flex items-center justify-center">
+                            <img src="${prodImage}" class="max-w-full max-h-full object-contain" onerror="this.src='https://placehold.co/400x400?text=Sem+imagem'">
+                        </div>
+                        <div class="flex-grow">
+                            <h3 class="font-bold text-slate-800 text-sm sm:text-base mb-1 line-clamp-1">${prodName}</h3>
+                            <p class="text-xl sm:text-2xl font-black text-emerald-600 mb-3">R$ ${prodPrice}</p>
+                            <div class="flex gap-2">
+                                <a href="${prodLink}" target="_blank" class="bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider">Acessar</a>
+                                <button onclick="whatsappShare('${prodName.replace(/'/g, "\\'")}', '${prodPrice}', '${prodLink}')" class="border border-slate-200 text-slate-500 px-3 py-2 rounded-xl text-[10px] font-bold uppercase">💬 Enviar</button>
+                            </div>
+                        </div>
+                    </div>`;
+                }
+
+                return `
+                <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div class="aspect-square bg-slate-50 rounded-2xl mb-4 overflow-hidden border border-slate-50 flex items-center justify-center">
+                            <img src="${prodImage}" class="max-w-full max-h-full object-contain" onerror="this.src='https://placehold.co/400x400?text=Sem+imagem'">
+                        </div>
+                        <h3 class="font-bold text-slate-800 text-sm mb-2 line-clamp-2">${prodName}</h3>
+                        <p class="text-xl font-black text-emerald-600">R$ ${prodPrice}</p>
+                    </div>
+                    <div class="mt-6 flex flex-col gap-2">
+                        <a href="${prodLink}" target="_blank" class="w-full bg-slate-900 text-white text-center font-bold py-3 rounded-xl text-xs uppercase hover:bg-black transition-all">Acessar Link Direto</a>
+                        <button onclick="whatsappShare('${prodName.replace(/'/g, "\\'")}', '${prodPrice}', '${prodLink}')" class="w-full border border-slate-200 text-slate-500 font-bold py-2 rounded-xl text-[10px] uppercase flex items-center justify-center gap-2">
+                           💬 Compartilhar
+                        </button>
+                    </div>
+                </div>`;
+            }).join('');
+        };
+
+        window.renderAdminList = () => {
+            const list = document.getElementById('admin-list');
+            if (!list) return;
+            list.innerHTML = products.map(p => `
+                <div class="bg-white p-3 rounded-xl border border-slate-200 flex justify-between items-center shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <img src="${p.image || 'https://placehold.co/400x400?text=Sem+imagem'}" class="w-10 h-10 object-cover rounded-lg" onerror="this.src='https://placehold.co/400x400?text=Sem+imagem'">
+                        <p class="text-xs font-bold text-slate-800 line-clamp-1">${p.name}</p>
+                    </div>
+                    <button onclick="deleteProduct('${p.id}')" class="p-2 text-slate-300 hover:text-red-500">🗑️</button>
+                </div>`).join('');
+        };
+
+        window.deleteProduct = async (id) => {
+            if (confirm("Excluir item?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', id));
+        };
+
+        window.copyMsg = (name, price, link) => {
+            const msg = `*${name}* 👶\n\n✨ Confira essa oferta!\n💰 Valor: *R$ ${price}*\n\n🔗 Link: ${link}`;
+            window.copyToClipboard(msg);
+        };
+
+        window.copyFullList = () => {
+            let list = "🛍️ *CATÁLOGO ATUALIZADO* 🛍️\n\n";
+            products.forEach(p => list += `• ${p.name}: R$ ${p.price}\n🔗 ${p.link}\n\n`);
+            window.copyToClipboard(list);
+        };
+
+        initFirebaseSession();
+    </script>
+</body>
+
+</html>
